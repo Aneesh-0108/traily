@@ -1,0 +1,21 @@
+# Phase 0 foundation: no third-party dependencies.
+#
+# Why this file is intentionally (almost) empty:
+# - Phase 0 needs only the Python standard library (json, time, unittest,
+#   pathlib) for the entry point, fixture data, placeholder timing script,
+#   and basic tests.
+# - Per AGENTS.md (CPU-only, offline at runtime, simple code over
+#   frameworks), we deliberately do NOT add the following yet:
+#   - faster-whisper / whisper.cpp bindings (Phase 1 STT)
+#   - llama-cpp-python (Phase 1 LLM, 3B or smaller GGUF, CPU/int8)
+#   - Piper TTS (Phase 1 TTS)
+#   - OSM libraries (e.g. osmnx/overpy — Phase 1 place context)
+#   - web frameworks, databases, cloud SDKs (out of scope: laptop demo,
+#     no runtime network calls, no web UI, no cloud/runtime APIs)
+# - Test runner: stdlib `unittest` is used (`python -m unittest ...`),
+#   so `pytest` is intentionally not added to keep setup offline-friendly
+#   and dependency-free.
+#
+# When a Phase 1 dependency becomes genuinely required, add it here with
+# a comment explaining: why needed, what it is used for, and why it fits
+# the CPU-only/offline constraints.

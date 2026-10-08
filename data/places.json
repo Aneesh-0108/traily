@@ -1,0 +1,29 @@
+{
+  "places": [
+    {
+      "name": "Example Temple",
+      "type": "place_of_worship",
+      "distance_m": 300
+    },
+    {
+      "name": "Green Park",
+      "type": "park",
+      "distance_m": 450
+    },
+    {
+      "name": "Old Library",
+      "type": "library",
+      "distance_m": 600
+    },
+    {
+      "name": "Sunrise Cafe",
+      "type": "cafe",
+      "distance_m": 800
+    },
+    {
+      "name": "Hill Viewpoint",
+      "type": "viewpoint",
+      "distance_m": 1200
+    }
+  ]
+}

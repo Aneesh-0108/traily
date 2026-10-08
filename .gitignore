@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.env
+# Local model binaries (large, fetched during prep, never committed)
+models/whisper/*
+models/llm/*
+models/piper/*
+!models/whisper/.gitkeep
+!models/llm/.gitkeep
+!models/piper/.gitkeep
