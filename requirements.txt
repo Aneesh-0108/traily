@@ -1,21 +1,29 @@
-# Phase 0 foundation: no third-party dependencies.
+# Phase 1 dependencies.
 #
-# Why this file is intentionally (almost) empty:
-# - Phase 0 needs only the Python standard library (json, time, unittest,
-#   pathlib) for the entry point, fixture data, placeholder timing script,
-#   and basic tests.
-# - Per AGENTS.md (CPU-only, offline at runtime, simple code over
-#   frameworks), we deliberately do NOT add the following yet:
-#   - faster-whisper / whisper.cpp bindings (Phase 1 STT)
-#   - llama-cpp-python (Phase 1 LLM, 3B or smaller GGUF, CPU/int8)
-#   - Piper TTS (Phase 1 TTS)
-#   - OSM libraries (e.g. osmnx/overpy — Phase 1 place context)
-#   - web frameworks, databases, cloud SDKs (out of scope: laptop demo,
-#     no runtime network calls, no web UI, no cloud/runtime APIs)
-# - Test runner: stdlib `unittest` is used (`python -m unittest ...`),
-#   so `pytest` is intentionally not added to keep setup offline-friendly
-#   and dependency-free.
+# Only ONE new Python dependency vs Phase 0, explained per AGENTS.md:
 #
-# When a Phase 1 dependency becomes genuinely required, add it here with
-# a comment explaining: why needed, what it is used for, and why it fits
-# the CPU-only/offline constraints.
+# - piper-tts==1.8.0 — WHY: the Phase 1 pipeline must synthesize speech
+#   locally with the AGENTS.md-selected voice (en_US-lessac-medium), and
+#   Piper is that selected engine. WHAT: used only by src/tts/speak.py,
+#   which shells out to the `piper` binary (CPU-only: no --cuda flag).
+#   WHY IT FITS CPU-only/offline: Piper is a small on-device neural
+#   vocoder; it runs on CPU with no network access (model file
+#   models/piper/en_US-lessac-medium.onnx is read from disk). It was
+#   already installed in the project .venv and is reused, not reinstalled.
+#   (Its transitive deps numpy/onnxruntime are pulled in by pip.)
+#
+# Deliberately NOT added (no Python package needed):
+# - whisper.cpp / llama.cpp: used as pre-installed SYSTEM binaries
+#   (`whisper-cli`, `llama-cli`) via subprocess, not Python bindings.
+#   Python bindings (faster-whisper, llama-cpp-python) would add heavy
+#   build/runtime weight for no Phase 1 benefit; the verified CLI flags
+#   (-ngl 0 --reasoning off --jinja -st) already give us what we need.
+# - Microphone capture: system `parec` (PulseAudio) + stdlib `wave`.
+#   No sounddevice/pyaudio: avoids new native deps and keeps the fixed-
+#   duration recorder to ~40 lines of stdlib-assisted code.
+# - Playback: system `paplay`. No pygame/playsound: same reasoning.
+# - OSM/GPS/web/cloud/fine-tuning: out of Phase 1 scope per AGENTS.md.
+#
+# Setup may use the network (pip install); RUNTIME is fully offline.
+
+piper-tts==1.8.0

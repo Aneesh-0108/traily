@@ -1,46 +1,36 @@
-"""Phase 0 placeholder timing benchmark.
+"""Phase 1 pipeline benchmark (non-interactive, no microphone).
 
-Establishes the per-stage timing output format required by AGENTS.md
-(STT, LLM, TTS separately) so Phase 1 can fill in real measurements.
-Target for the real pipeline: ~8-10 s total, question to spoken answer.
+Runs the full local pipeline in --text mode (places -> Qwen3.5-4B ->
+Piper) and prints the same stage-timing summary as `run`. The microphone
+and STT stages are skipped here; STT was measured separately at ~1.3 s
+for a short question on this machine (see README).
 
-Usage: python3 scripts/timing.py
+Usage:
+  python3 scripts/timing.py [--text "What's nearby?"] [--no-playback]
 """
 
 from __future__ import annotations
 
-import json
-import time
+import argparse
+import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PLACES_FILE = REPO_ROOT / "data" / "places.json"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-
-def stage(name: str, func) -> tuple[float, object]:
-    start = time.perf_counter()
-    result = func()
-    elapsed = time.perf_counter() - start
-    return elapsed, result
-
-
-def load_places_stub() -> list:
-    """Placeholder for future context loading (nearest 5-10 items)."""
-    with PLACES_FILE.open(encoding="utf-8") as f:
-        return json.load(f).get("places", [])
+from src.main import run_pipeline  # noqa: E402
 
 
 def main() -> int:
-    print("Trail Companion timing placeholder (Phase 0 — no real STT/LLM/TTS yet)")
-    stt_s, _ = stage("stt", lambda: None)  # Phase 1: speech-to-text
-    llm_s, places = stage("llm", load_places_stub)  # Phase 1: LLM + place context
-    tts_s, _ = stage("tts", lambda: None)  # Phase 1: text-to-speech
-    total_s = stt_s + llm_s + tts_s
-    print(f"STT: {stt_s:.3f} s (placeholder)")
-    print(f"LLM: {llm_s:.3f} s (placeholder, loaded {len(places)} fixture places)")
-    print(f"TTS: {tts_s:.3f} s (placeholder)")
-    print(f"Total: {total_s:.3f} s (Phase 1 target: ~8-10 s)")
-    return 0
+    parser = argparse.ArgumentParser(description="Traily Phase 1 benchmark.")
+    parser.add_argument("--text", default="What's nearby?")
+    parser.add_argument("--no-playback", action="store_true")
+    args = parser.parse_args()
+    print(f"Benchmark question: {args.text!r} (mic/STT skipped; STT ~1.3 s separately)")
+    with tempfile.TemporaryDirectory(prefix="traily-bench-") as tmp:
+        return run_pipeline(args.text, 0.0, not args.no_playback, Path(tmp))
 
 
 if __name__ == "__main__":

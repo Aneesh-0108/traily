@@ -10,3 +10,4 @@ models/piper/*
 !models/whisper/.gitkeep
 !models/llm/.gitkeep
 !models/piper/.gitkeep
+AGENTS.md
