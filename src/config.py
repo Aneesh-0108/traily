@@ -47,6 +47,14 @@ RECORD_SECONDS = float(_env("TRAILY_RECORD_SECONDS", "8"))
 RECORD_RATE_HZ = int(_env("TRAILY_RECORD_RATE_HZ", "16000"))
 MAX_PLACES = int(_env("TRAILY_MAX_PLACES", "10"))
 
+# Phase 2 offline pack + location (empty == unset; manual coords are TEST
+# coordinates, never live location). CLI flags override these.
+PACK_FILE = _env("TRAILY_PACK_FILE", "") or None
+DEF_LAT = _env("TRAILY_LAT", "")
+DEF_LON = _env("TRAILY_LON", "")
+LOCATION_SOURCE = _env("TRAILY_LOCATION_SOURCE", "manual")
+MAX_LOCATION_AGE_S = float(_env("TRAILY_MAX_LOCATION_AGE_S", "30"))
+
 # LLM inference settings. Defaults are the known-good values from the
 # standalone laptop measurement (~4.13 s, ~4.2 GiB peak RSS):
 #   -ngl 0 --reasoning off --jinja -st -c 2048 -b 128 -ub 64 -n 48
@@ -55,7 +63,10 @@ MAX_PLACES = int(_env("TRAILY_MAX_PLACES", "10"))
 # KV-cache allocation and prompt processing on 16 GB CPU-only RAM.
 # -n 48 caps output at two short spoken sentences (AGENTS.md: limit
 # output tokens before touching quantization or model choice).
+# -n 96 caps output for up to 10 supplied names + distances in two short
+# spoken sentences (five places need ~60 tokens; 48 cut answers off
+# mid-sentence). The cap only costs time when the model uses the tokens.
 LLM_CTX_SIZE = int(_env("TRAILY_LLM_CTX_SIZE", "2048"))
 LLM_BATCH_SIZE = int(_env("TRAILY_LLM_BATCH_SIZE", "128"))
 LLM_UBATCH_SIZE = int(_env("TRAILY_LLM_UBATCH_SIZE", "64"))
-LLM_MAX_TOKENS = int(_env("TRAILY_LLM_MAX_TOKENS", "48"))
+LLM_MAX_TOKENS = int(_env("TRAILY_LLM_MAX_TOKENS", "96"))

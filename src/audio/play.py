@@ -25,7 +25,7 @@ def play_wav(path: Path, play_bin: str = config.APLAY_BIN) -> None:
             "Install PulseAudio client tools or set TRAILY_APLAY_BIN."
         )
     try:
-        subprocess.run(
+        proc = subprocess.run(
             [play_bin, str(path)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -34,3 +34,7 @@ def play_wav(path: Path, play_bin: str = config.APLAY_BIN) -> None:
         )
     except OSError as exc:
         raise PlaybackError(f"player '{play_bin}' failed: {exc}") from exc
+    if proc.returncode != 0:
+        # A cut-off or failed playback must surface instead of reporting
+        # success: the user hears less than the terminal shows otherwise.
+        raise PlaybackError(f"player '{play_bin}' exited with code {proc.returncode}.")

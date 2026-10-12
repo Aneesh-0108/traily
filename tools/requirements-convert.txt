@@ -1,0 +1,32 @@
+# Converter + weight-processing environment for the dry run.
+# Isolated venv ONLY — never install into the runtime .venv or the
+# lightweight train venv (train env keeps the tiny `tinker` SDK only):
+#   python3 -m venv /tmp/traily-convert-venv
+#   /tmp/traily-convert-venv/bin/pip install -r tools/requirements-convert.txt
+#   /tmp/traily-convert-venv/bin/pip install --no-deps tinker-cookbook==0.5.7 blobfile==3.3.0 chz==0.4.0 datasets==5.1.0 pillow==12.3.0
+# (--no-deps second step: full cookbook metadata would pull the CUDA torch
+# bundle; torch CPU is already present from the line below.)
+# Justified additions 2026-10-12 (ModuleNotFoundError: torch post-mortem):
+# - tinker (small): the export helper needs ServiceClient-adjacent types
+#   only for downloads; billing happens exclusively in the train process.
+# - tinker-cookbook --no-deps + blobfile/chz/datasets/pillow: the minimal
+#   set that makes `tinker_cookbook.supervised.data` (batch rendering) and
+#   `tinker_cookbook.weights` (download/PEFT export) importable.
+# Notes:
+# - torch from the CPU index (default pip torch bundles CUDA, ~GBs).
+# - gguf is NOT from PyPI here: PyPI max is 0.19.0, which lacks
+#   MODEL_ARCH.DFLASH and cannot import the pinned converter. The repo
+#   gguf-py/ checkout (fetched by tools/fetch-converter.sh) shadows it via
+#   PYTHONPATH. pip gguf listed only as a fallback floor.
+# Measured footprint 2026-10-11: ~1.2 GB venv (torch CPU + deps).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+safetensors==0.8.0
+numpy==2.5.4
+transformers==5.19.0
+huggingface_hub==2.2.0
+gguf==0.19.0  # floor only; repo gguf-py/ shadows this at runtime
+tinker==0.33.1
+# NOTE: tinker-cookbook + blobfile/chz/datasets/pillow are installed via the
+# --no-deps second step in the header (plain `pip install -r` cannot express
+# --no-deps per line, and full metadata would pull the CUDA torch bundle).

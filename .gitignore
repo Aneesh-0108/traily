@@ -10,4 +10,16 @@ models/piper/*
 !models/whisper/.gitkeep
 !models/llm/.gitkeep
 !models/piper/.gitkeep
+# Local trail packs (built per area; the area itself can reveal personal
+# location, so packs stay on the laptop like model binaries)
+data/packs/*
+!data/packs/.gitkeep
+# Fine-tune data (embeds the demo area's real place names; regenerated
+# locally via scripts/prepare_finetune_data.py, never committed)
+data/finetune/*
+!data/finetune/.gitkeep
+# Pinned upstream LoRA converter checkout (reproducible via tools/fetch-converter.sh)
+tools/lora-converter/
+# Local run/training workdirs (adapters, checkpoints, smoke-test artifacts)
+local/
 AGENTS.md

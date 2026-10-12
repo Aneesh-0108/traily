@@ -14,7 +14,9 @@ Verified runtime flags (llama.cpp 0.4.0-dev, `--help`):
 
 Output-hygiene additions (do not change the reasoning configuration):
 - `--simple-io --no-display-prompt --no-warmup` for clean subprocess use.
-- `-n` caps output tokens (48: two short spoken sentences; latency control).
+- `-n` caps output tokens (96: enough for up to 10 supplied names +
+  distances in two short sentences; the model still stops early at EOS,
+  so the cap only costs time when the model actually uses the tokens).
 - Prompt passed via `-f` file; stdin is DEVNULL so the CLI always exits
   after one turn instead of waiting for chat input.
 
@@ -33,10 +35,12 @@ Verified stream layout (llama.cpp 0.4.0-dev, build 10809, stdout piped):
   answer, and dropping `-st` makes the CLI loop on `> ` prompts forever.
 - stderr carries only warnings (e.g. no-GPU notices); it is ignored.
 - Extraction is therefore anchor-based AND fail-closed: the answer is the
-  text between the echoed last prompt line and the perf/`Exiting...`/`> `
-  terminators. If the anchor is missing, or the extracted text still
-  contains CLI markers, run_llm raises LLMError instead of sending raw
-  CLI logs to Piper. stdout and stderr are NEVER concatenated.
+  text after the `> `-opened prompt-echo block (echo lines are consumed
+  while they match successive prompt lines, tolerating the CLI's
+  `... (truncated)` tail cuts) up to the perf/`Exiting...`/`> `
+  terminators. If no valid echo block opens the output, or the extracted
+  text still contains CLI markers, run_llm raises LLMError instead of
+  sending raw CLI logs to Piper. stdout and stderr are NEVER concatenated.
 """
 
 from __future__ import annotations
@@ -67,7 +71,7 @@ def build_prompt(question: str, places: list[dict[str, Any]]) -> str:
         lines.append(f"- {place['name']} ({place['type']}, {place['distance_m']} m)")
     lines += [
         "Rules: never invent names, distances, directions, or facts. No navigation directions. "
-        "Mention the nearest two or three places by name with their distances in meters. "
+        "Mention EVERY supplied place by name with its distance in meters, each place once. "
         "At most two short sentences, natural spoken English, no Markdown, no lists.",
         f"User: {question.strip()}",
     ]
@@ -109,7 +113,7 @@ _CONTAMINATION_MARKERS = (
     "ftype",
 )
 
-# Generous upper bound: -n 48 caps generation at ~48 tokens (~200 chars).
+# Generous upper bound: -n 96 caps generation at ~96 tokens (~400 chars).
 # Anything far beyond that is runaway CLI output, never a spoken answer.
 _MAX_ANSWER_CHARS = 1500
 
@@ -118,26 +122,56 @@ _MAX_ANSWER_CHARS = 1500
 _LLM_TIMEOUT_S = 300
 
 
-def _find_answer_start(lines: list[str], last_prompt_line: str) -> int:
-    """Index of the first line after the echoed prompt, or -1 if absent.
+def _echo_matches(prompt_line: str, echo_line: str) -> bool:
+    """True if an echoed CLI line reproduces a prompt line.
 
-    The CLI truncates long echoed input lines, e.g.
-    `User: What are the nearby  ... (truncated)`, so besides exact matches
-    we also accept a line starting with the echo marker plus the first 24
-    characters of the last prompt line. Banner/menu lines never share that
-    prefix; the LAST match wins in case the model quotes the question.
+    Besides exact matches, accepts the CLI's truncation form, e.g.
+    `User: What are the nearby  ... (truncated)`, by matching the
+    surviving head (minimum 20 chars to avoid false positives).
     """
-    start = -1
-    head = last_prompt_line[:24]
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped == last_prompt_line or stripped == f"> {last_prompt_line}":
-            start = i + 1
-        elif head and (stripped.startswith(f"> {head}") or stripped.startswith(head)):
-            start = i + 1
-    return start
+    echo = echo_line.strip()
+    prompt = prompt_line.strip()
+    if not echo or not prompt:
+        return False
+    if echo == prompt:
+        return True
+    if echo.endswith("... (truncated)"):
+        head = echo[: -len("... (truncated)")].rstrip()
+        if len(head) >= 20 and prompt.startswith(head):
+            return True
+    return False
+
+
+def _find_answer_start(lines: list[str], prompt_lines: list[str]) -> int:
+    """Index of the first line after the echoed prompt block, or -1.
+
+    The echo always starts at the first `> ` line and reproduces prompt
+    lines verbatim (first line keeps the `> ` marker). The tail may be
+    truncated mid-line (`... (truncated)`) or dropped entirely — e.g. a
+    real Phase 2 run echoed everything up to `At most t ... (truncated)`
+    and never showed the final `User:` line. So instead of anchoring on
+    the LAST prompt line, consume echo lines while they match successive
+    prompt lines; the answer starts at the first non-matching line.
+    Returns -1 (fail closed) when no valid echo block opens the output.
+    """
+    if not prompt_lines:
+        return -1
+    echo_at = next(
+        (i for i, line in enumerate(lines) if line.strip().startswith("> ")), -1
+    )
+    if echo_at < 0:
+        return -1
+    if not _echo_matches(prompt_lines[0], lines[echo_at].strip()[2:]):
+        return -1
+    i, j = echo_at + 1, 1
+    while i < len(lines) and j < len(prompt_lines):
+        if not lines[i].strip():
+            break
+        if not _echo_matches(prompt_lines[j], lines[i]):
+            break
+        i += 1
+        j += 1
+    return i
 
 
 def looks_contaminated(answer: str) -> bool:
@@ -159,6 +193,48 @@ def looks_contaminated(answer: str) -> bool:
     return False
 
 
+def missing_places(answer: str, places: list[dict[str, Any]]) -> list[str]:
+    """Names of supplied places NOT represented in `answer` with distances.
+
+    A place counts as mentioned only when its full name (case-insensitive)
+    and its exact distance in meters (word-boundary match, so 130 does not
+    match 1300) both appear. Returns the missing names, [] when complete.
+    """
+    missing: list[str] = []
+    for place in places:
+        name_ok = place["name"].lower() in answer.lower()
+        dist_ok = re.search(r"\b%d\b" % int(place["distance_m"]), answer) is not None
+        if not (name_ok and dist_ok):
+            missing.append(place["name"])
+    return missing
+
+
+def fallback_answer(places: list[dict[str, Any]]) -> str:
+    """Deterministic one-sentence summary naming every supplied place once.
+
+    Uses only supplied names/distances — never invents anything. This is
+    the single fallback (no retry loop) when the LLM omits a place.
+    """
+    bits = [f"{p['name']} at {int(p['distance_m'])} meters" for p in places]
+    if len(bits) == 1:
+        return f"Nearby: {bits[0]}."
+    return "Nearby: " + ", ".join(bits[:-1]) + ", and " + bits[-1] + "."
+
+
+def ensure_complete_answer(
+    answer: str, places: list[dict[str, Any]]
+) -> tuple[str, bool]:
+    """Return (final_text, used_fallback).
+
+    The LLM answer stands when every supplied place is named with its
+    distance; otherwise the deterministic fallback speaks instead, so
+    Piper never receives an incomplete answer. No retries, no model calls.
+    """
+    if places and missing_places(answer, places):
+        return fallback_answer(places), True
+    return answer, False
+
+
 def parse_llm_output(stdout: str, prompt: str) -> str:
     """Extract the assistant answer from `llama-cli -st` chat output.
 
@@ -167,8 +243,8 @@ def parse_llm_output(stdout: str, prompt: str) -> str:
     output. Never returns raw CLI logs for TTS.
     """
     lines = stdout.splitlines()
-    last_prompt_line = prompt.strip().splitlines()[-1].strip() if prompt.strip() else ""
-    start = _find_answer_start(lines, last_prompt_line) if last_prompt_line else -1
+    prompt_lines = prompt.strip().splitlines() if prompt.strip() else []
+    start = _find_answer_start(lines, prompt_lines)
     if start < 0:
         raise LLMError("LLM output missing prompt echo; cannot isolate the answer.")
     answer_lines: list[str] = []

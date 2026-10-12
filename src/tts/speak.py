@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
+import wave
 from pathlib import Path
 
 from src import config
@@ -52,4 +53,11 @@ def synthesize(
         raise TTSError(f"'{piper_bin}' failed with exit code {proc.returncode}.")
     if not out_wav.is_file():
         raise TTSError(f"Piper produced no output file: {out_wav}")
+    try:
+        with wave.open(str(out_wav), "rb") as wav:
+            frames, rate = wav.getnframes(), wav.getframerate()
+    except (wave.Error, EOFError, OSError) as exc:
+        raise TTSError(f"Piper output is not a readable WAV: {out_wav} ({exc})") from exc
+    if frames <= 0 or rate <= 0:
+        raise TTSError(f"Piper rendered empty audio: {out_wav}")
     return elapsed

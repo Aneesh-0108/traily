@@ -27,24 +27,88 @@ if str(REPO_ROOT) not in sys.path:
 from src import config  # noqa: E402
 from src.audio.play import PlaybackError, play_wav  # noqa: E402
 from src.audio.record import AudioError, record_question  # noqa: E402
-from src.llm.answer import LLMError, build_prompt, run_llm  # noqa: E402
+from src.llm.answer import LLMError, build_prompt, ensure_complete_answer, run_llm  # noqa: E402
+from src.location.providers import (  # noqa: E402
+    LocationError,
+    check_fresh,
+    gpsd_location,
+    manual_location,
+)
+from src.places.geo import GeoError, nearest_in_pack  # noqa: E402
 from src.places.nearby import load_places, nearest_places  # noqa: E402
+from src.places.pack import load_pack  # noqa: E402
 from src.stt.transcribe import STTError, is_empty_transcription, transcribe  # noqa: E402
 from src.tts.speak import TTSError, synthesize  # noqa: E402
 
 TARGET_SECONDS = 10.0  # AGENTS.md latency target (upper bound)
+NO_PLACES_EXIT = 4  # coordinates unusable or no nearby places: honest message, no LLM call
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Traily Phase 1 local voice pipeline.")
+    parser = argparse.ArgumentParser(description="Traily Phase 2 local voice pipeline.")
     parser.add_argument("--text", default=None, help="question text (skips microphone)")
     parser.add_argument("--record-seconds", type=float, default=config.RECORD_SECONDS)
     parser.add_argument("--no-playback", action="store_true", help="do not play reply audio")
     parser.add_argument("--workdir", default=None, help="artifact dir (default: temp dir)")
+    parser.add_argument("--pack", default=config.PACK_FILE, help="offline trail pack (data/packs/*.json); default: Phase 1 fixture")
+    parser.add_argument("--lat", type=float, default=float(config.DEF_LAT) if config.DEF_LAT else None, help="manual TEST latitude (labelled, never live)")
+    parser.add_argument("--lon", type=float, default=float(config.DEF_LON) if config.DEF_LON else None, help="manual TEST longitude (labelled, never live)")
+    parser.add_argument(
+        "--location-source",
+        choices=("manual", "gpsd"),
+        default=config.LOCATION_SOURCE,
+        help="location source for --pack mode (default: manual test coords)",
+    )
+    parser.add_argument("--max-age", type=float, default=config.MAX_LOCATION_AGE_S, help="max location age in seconds")
     return parser.parse_args(argv)
 
 
-def run_pipeline(question: str | None, record_seconds: float, playback: bool, workdir: Path) -> int:
+def resolve_places(args: argparse.Namespace) -> tuple[list[dict], str]:
+    """Return (places, origin_label) for the LLM prompt.
+
+    Pack mode: coordinates -> local pack -> haversine -> nearest 10.
+    Default: Phase 1 fictional fixture (backward compatible).
+    """
+    if args.pack is None:
+        return nearest_places(load_places(), config.MAX_PLACES), "local fixture data"
+    try:
+        pack = load_pack(args.pack)
+    except ValueError as exc:
+        print(f"Place data unavailable: {exc}")
+        raise SystemExit(2) from exc
+    try:
+        if args.location_source == "gpsd":
+            loc = check_fresh(gpsd_location(), args.max_age)
+            origin = "live GPSD fix"
+        else:
+            if args.lat is None or args.lon is None:
+                print("Pack mode needs coordinates: --lat/--lon (test) or --location-source gpsd.")
+                raise SystemExit(2)
+            loc = manual_location(args.lat, args.lon)
+            origin = f"MANUAL test coordinates ({loc.lat}, {loc.lon})"
+    except LocationError as exc:
+        print(f"Location unavailable: {exc}")
+        raise SystemExit(2) from exc
+    try:
+        places = nearest_in_pack(pack, loc.lat, loc.lon, config.MAX_PLACES)
+    except GeoError as exc:
+        print(f"No nearby places: {exc}")
+        raise SystemExit(NO_PLACES_EXIT) from exc
+    if not places:
+        print(f"No suitable places near ({loc.lat}, {loc.lon}) in pack '{pack['area_name']}'.")
+        raise SystemExit(NO_PLACES_EXIT)
+    acc = f", accuracy ~{loc.accuracy_m:.0f} m" if loc.accuracy_m is not None else ""
+    print(f"Location: ({loc.lat}, {loc.lon}) via {loc.source}{acc}.")
+    return places, f"offline pack '{pack['area_name']}'"
+
+
+def run_pipeline(
+    question: str | None,
+    record_seconds: float,
+    playback: bool,
+    workdir: Path,
+    args: argparse.Namespace | None = None,
+) -> int:
     # Distinct time.perf_counter() timestamps for every stage boundary.
     # Post-recording latency is measured from RECORDING FINISH (not true
     # end-of-speech: fixed-duration recording has no VAD) to playback start.
@@ -87,12 +151,16 @@ def run_pipeline(question: str | None, record_seconds: float, playback: bool, wo
         ts["stt_start"] = ts["stt_end"] = time.perf_counter()
 
     # 4. Places (validated, sorted, limited — never computed by the LLM).
+    if args is None:
+        args = parse_args([])
     try:
-        places = nearest_places(load_places(), config.MAX_PLACES)
+        places, origin = resolve_places(args)
+    except SystemExit as exc:
+        return int(exc.code or 0)
     except ValueError as exc:
         print(f"Place data unavailable: {exc}")
         return 2
-    print(f"Using {len(places)} nearby place(s) from local data.")
+    print(f"Using {len(places)} nearby place(s) from {origin}.")
 
     # 5. LLM (reasoning always off inside run_llm; see src/llm/answer.py).
     prompt = build_prompt(question, places)
@@ -103,6 +171,9 @@ def run_pipeline(question: str | None, record_seconds: float, playback: bool, wo
         print(f"Answer generation failed: {exc}")
         return 2
     ts["llm_end"] = time.perf_counter()
+    answer, used_fallback = ensure_complete_answer(answer, places)
+    if used_fallback:
+        print("Note: LLM omitted a place; using deterministic complete summary.")
     print(f'Traily: "{answer}"')
 
     # 6. TTS synthesis, then playback (timed separately).
@@ -155,9 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.workdir:
         workdir = Path(args.workdir)
-        return run_pipeline(args.text, args.record_seconds, not args.no_playback, workdir)
+        return run_pipeline(args.text, args.record_seconds, not args.no_playback, workdir, args)
     with tempfile.TemporaryDirectory(prefix="traily-") as tmp:
-        return run_pipeline(args.text, args.record_seconds, not args.no_playback, Path(tmp))
+        return run_pipeline(args.text, args.record_seconds, not args.no_playback, Path(tmp), args)
 
 
 if __name__ == "__main__":

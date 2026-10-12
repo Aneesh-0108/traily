@@ -22,7 +22,12 @@
 #   No sounddevice/pyaudio: avoids new native deps and keeps the fixed-
 #   duration recorder to ~40 lines of stdlib-assisted code.
 # - Playback: system `paplay`. No pygame/playsound: same reasoning.
-# - OSM/GPS/web/cloud/fine-tuning: out of Phase 1 scope per AGENTS.md.
+# - Phase 2 OSM/location: Overpass fetch uses stdlib `urllib` + `json`
+#   (one POST, one response — no requests lib needed); haversine and
+#   pack validation use stdlib `math` + `json`; the GPSD client uses
+#   stdlib `socket` on 127.0.0.1 only. No new dependency: the runtime
+#   stays offline and the .venv stays minimal.
+# - OSM/GPS hardware/web/cloud/fine-tuning: out of scope per AGENTS.md.
 #
 # Setup may use the network (pip install); RUNTIME is fully offline.
 
